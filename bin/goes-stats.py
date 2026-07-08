@@ -3,6 +3,8 @@
 
 Polls the SatDump live HTTP status endpoint and shows SNR / peak SNR / BER /
 RS errors / lock state, with running min/avg/max and lock-% over the session.
+Also shows basic Pi host health -- CPU temperature, SD-card usage, load, and
+memory -- so one glance covers both the link and the box it runs on.
 Unlike goes-health-monitor.py (the unattended pager), this is an interactive
 dashboard you start yourself when you want to watch the link.
 
@@ -28,6 +30,9 @@ Options:
       --once           print a single snapshot and exit
       --no-color       disable ANSI colour
 
+Env: DISK_PATH overrides which filesystem's usage is shown (default "/", the
+SD-card rootfs the products live on).
+
 Stdlib only. Ctrl-C stops it and prints a session summary.
 """
 
@@ -40,7 +45,11 @@ import time
 import urllib.request
 
 CSV_HEADER = ("iso_time,epoch,snr,peak_snr,freq_offset,"
-              "deframer_lock,viterbi_lock,viterbi_ber,rs_avg")
+              "deframer_lock,viterbi_lock,viterbi_ber,rs_avg,"
+              "cpu_temp_c,disk_used_pct,disk_free_gb,load1,mem_used_pct")
+
+# Filesystem to report for storage (the products share the SD-card rootfs).
+DISK_PATH = os.environ.get("DISK_PATH", "/")
 
 
 def find_field(obj, name):
@@ -87,6 +96,65 @@ def poll(endpoint, timeout):
     }
 
 
+def read_cpu_temp():
+    """CPU temperature in degrees C from the thermal-zone sysfs, or None."""
+    try:
+        with open("/sys/class/thermal/thermal_zone0/temp") as f:
+            return int(f.read().strip()) / 1000.0
+    except Exception:
+        return None
+
+
+def read_disk(path):
+    """(used_pct, free_gb, total_gb) for the fs holding `path` -- df semantics."""
+    try:
+        st = os.statvfs(path)
+        total = st.f_blocks * st.f_frsize
+        avail = st.f_bavail * st.f_frsize          # space usable by non-root
+        used = total - st.f_bfree * st.f_frsize    # space in use (incl. reserved)
+        used_pct = 100.0 * used / (used + avail) if (used + avail) else None
+        return used_pct, avail / 1e9, total / 1e9
+    except Exception:
+        return None, None, None
+
+
+def read_mem():
+    """Percent memory in use, from /proc/meminfo (MemTotal vs MemAvailable)."""
+    try:
+        info = {}
+        with open("/proc/meminfo") as f:
+            for line in f:
+                k, _, rest = line.partition(":")
+                if rest:
+                    info[k] = float(rest.strip().split()[0])   # value in kB
+        total, avail = info.get("MemTotal"), info.get("MemAvailable")
+        if total and avail is not None:
+            return 100.0 * (total - avail) / total
+    except Exception:
+        pass
+    return None
+
+
+def read_load1():
+    try:
+        return os.getloadavg()[0]
+    except (OSError, AttributeError):
+        return None
+
+
+def gather_host():
+    """Snapshot of Pi host health (all fields degrade to None on failure)."""
+    used_pct, free_gb, total_gb = read_disk(DISK_PATH)
+    return {
+        "cpu_temp": read_cpu_temp(),
+        "disk_used_pct": used_pct,
+        "disk_free_gb": free_gb,
+        "disk_total_gb": total_gb,
+        "load1": read_load1(),
+        "mem_pct": read_mem(),
+    }
+
+
 class Stat:
     """Running min / max / sum for one metric (ignores None samples)."""
     def __init__(self):
@@ -124,12 +192,34 @@ def fmt(v, spec="{:.2f}"):
     return "n/a" if v is None else spec.format(v)
 
 
+def fmtc(v, spec="{}"):
+    """CSV cell: empty string for None (not 'n/a')."""
+    return "" if v is None else spec.format(v)
+
+
+def temp_txt(t, use_color):
+    """Colour CPU temp by Pi thermal headroom (throttle starts ~80-85 C)."""
+    if t is None:
+        return "n/a"
+    code = "1;32" if t < 70 else ("1;33" if t < 80 else "1;31")
+    return color("{:.1f} C".format(t), code, use_color)
+
+
+def disk_txt(pct, use_color):
+    """Colour disk usage against the disk-guard thresholds (80% / 95%)."""
+    if pct is None:
+        return "n/a"
+    code = "1;32" if pct < 80 else ("1;33" if pct < 95 else "1;31")
+    return color("{:.0f}% used".format(pct), code, use_color)
+
+
 def hms(seconds):
     seconds = int(seconds)
     return "{:02d}:{:02d}:{:02d}".format(seconds // 3600, (seconds % 3600) // 60, seconds % 60)
 
 
-def render(m, snr_s, peak_s, ber_s, rs_s, locked_count, samples, start, endpoint, use_color):
+def render(m, h, snr_s, peak_s, ber_s, rs_s, temp_s, locked_count, samples,
+           start, endpoint, ncpu, use_color):
     up = hms(time.time() - start)
     now = time.strftime("%H:%M:%S")
     lines = []
@@ -155,12 +245,24 @@ def render(m, snr_s, peak_s, ber_s, rs_s, locked_count, samples, start, endpoint
 
     lockpct = (100.0 * locked_count / samples) if samples else 0.0
     lines.append("  LOCKED  {:.1f}% of {} samples".format(lockpct, samples))
+
+    # --- Pi host health --------------------------------------------------------
+    lines.append("")
+    lines.append("  " + color("── host ──", "2", use_color))
+    lines.append("  TEMP    {}   (max {})".format(
+        temp_txt(h["cpu_temp"], use_color), fmt(temp_s.max, "{:.1f}")))
+    lines.append("  DISK    {}   {} free of {}".format(
+        disk_txt(h["disk_used_pct"], use_color),
+        fmt(h["disk_free_gb"], "{:.1f}G"), fmt(h["disk_total_gb"], "{:.0f}G")))
+    lines.append("  LOAD    {:>7}  (/{} cores)     MEM {}".format(
+        fmt(h["load1"], "{:.2f}"), ncpu, fmt(h["mem_pct"], "{:.0f}%")))
+
     lines.append("")
     lines.append("  [Ctrl-C to stop]")
     return "\n".join(lines)
 
 
-def summary(snr_s, ber_s, locked_count, samples, start):
+def summary(snr_s, ber_s, temp_s, h, locked_count, samples, start):
     print("\n— session summary —")
     print("  duration     {}".format(hms(time.time() - start)))
     print("  samples      {}".format(samples))
@@ -169,6 +271,9 @@ def summary(snr_s, ber_s, locked_count, samples, start):
         fmt(snr_s.min), fmt(snr_s.avg), fmt(snr_s.max)))
     print("  BER min/avg/max   {} / {} / {}".format(
         fmt_ber(ber_s.min), fmt_ber(ber_s.avg), fmt_ber(ber_s.max)))
+    print("  CPU temp max      {} C".format(fmt(temp_s.max, "{:.1f}")))
+    print("  disk now          {} used, {} free".format(
+        fmt(h.get("disk_used_pct"), "{:.0f}%"), fmt(h.get("disk_free_gb"), "{:.1f}G")))
 
 
 def main():
@@ -195,10 +300,12 @@ def main():
             logf.write(CSV_HEADER + "\n")
             logf.flush()
 
-    snr_s, peak_s, ber_s, rs_s = Stat(), Stat(), Stat(), Stat()
+    snr_s, peak_s, ber_s, rs_s, temp_s = Stat(), Stat(), Stat(), Stat(), Stat()
     locked_count = 0
     samples = 0
     start = time.time()
+    ncpu = os.cpu_count() or 1
+    last_h = [gather_host()]     # latest host snapshot, for the exit summary
     first_draw = [True]
 
     def draw(block):
@@ -211,7 +318,7 @@ def main():
 
     def stop(*_):
         if not args.quiet:
-            summary(snr_s, ber_s, locked_count, samples, start)
+            summary(snr_s, ber_s, temp_s, last_h[0], locked_count, samples, start)
         if logf:
             logf.close()
         sys.exit(0)
@@ -221,7 +328,10 @@ def main():
 
     while True:
         m = poll(args.endpoint, args.timeout)
+        h = gather_host()
+        last_h[0] = h
         samples += 1
+        temp_s.add(h["cpu_temp"])
         if m.get("reachable"):
             snr_s.add(m["snr"]); peak_s.add(m["peak_snr"])
             ber_s.add(m["ber"]); rs_s.add(m["rs_avg"])
@@ -230,21 +340,26 @@ def main():
 
         if logf:
             iso = time.strftime("%Y-%m-%dT%H:%M:%S")
+            # Host fields are always available (local); link fields blank if down.
+            host_cols = "{},{},{},{},{}".format(
+                fmtc(h["cpu_temp"], "{:.1f}"), fmtc(h["disk_used_pct"], "{:.1f}"),
+                fmtc(h["disk_free_gb"], "{:.1f}"), fmtc(h["load1"], "{:.2f}"),
+                fmtc(h["mem_pct"], "{:.1f}"))
             if m.get("reachable"):
-                row = "{},{:.0f},{},{},{},{},{},{},{}".format(
-                    iso, time.time(),
-                    fmt(m["snr"]), fmt(m["peak_snr"]), fmt(m["freq"], "{:.0f}"),
+                link_cols = "{},{},{},{},{},{},{}".format(
+                    fmtc(m["snr"], "{:.2f}"), fmtc(m["peak_snr"], "{:.2f}"),
+                    fmtc(m["freq"], "{:.0f}"),
                     1 if m["deframer_lock"] else 0,
                     m["viterbi_lock"] if m["viterbi_lock"] is not None else "",
-                    fmt_ber(m["ber"]), fmt(m["rs_avg"], "{:.0f}"))
+                    fmt_ber(m["ber"]), fmtc(m["rs_avg"], "{:.0f}"))
             else:
-                row = "{},{:.0f},,,,,,,".format(iso, time.time())
-            logf.write(row + "\n")
+                link_cols = ",,,,,,"
+            logf.write("{},{:.0f},{},{}\n".format(iso, time.time(), link_cols, host_cols))
             logf.flush()
 
         if not args.quiet:
-            block = render(m, snr_s, peak_s, ber_s, rs_s, locked_count, samples,
-                           start, args.endpoint, use_color)
+            block = render(m, h, snr_s, peak_s, ber_s, rs_s, temp_s, locked_count,
+                           samples, start, args.endpoint, ncpu, use_color)
             if args.once:
                 print(block)            # plain snapshot, no screen-clear
             else:
