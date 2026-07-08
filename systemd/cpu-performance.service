@@ -1,0 +1,17 @@
+[Unit]
+Description=Pin CPU governor to performance (real-time SDR: stop ondemand clock dither from starving the SatDump demod thread -> black scanlines)
+Documentation=file:/home/aiannazzone/goes-automation/README.md
+# The scaling_governor sysfs nodes exist once cpufreq is up; sysinit covers that.
+After=sysinit.target
+# Governor must be pinned before the live decode starts drawing real-time samples.
+Before=goes-decode.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/sh -c 'for g in /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor; do echo performance > "$g"; done'
+# Restore the stock governor on stop/disable so this is cleanly reversible.
+ExecStop=/bin/sh -c 'for g in /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor; do echo ondemand > "$g"; done'
+
+[Install]
+WantedBy=multi-user.target

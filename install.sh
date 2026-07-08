@@ -48,9 +48,12 @@ systemctl daemon-reload
 echo "== Enabling the disk guard now (safe: protective, decode-independent) =="
 systemctl enable --now goes-diskguard.timer
 
+echo "== Pinning CPU governor to performance now (safe: real-time SDR stability) =="
+systemctl enable --now cpu-performance.service
+
 cat <<EOF
 
-Installed. Enabled now: goes-diskguard.timer
+Installed. Enabled now: goes-diskguard.timer, cpu-performance.service
 NOT yet enabled (need config / hardware -- see README "Fill-in checklist"):
   goes-decode.service   (set GAIN in $ETC/decode.env, connect dongle)
   goes-health.timer     (enable together with the decode)
