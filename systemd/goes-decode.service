@@ -18,9 +18,13 @@ ExecStartPre=/bin/sh -c 'case "$GAIN" in *SET_WORKING_GAIN*|"") echo "GAIN not s
 # ${BIAS_FLAG} expands to --bias (LNA powered from the dongle) or nothing.
 # --fill_missing true: repair black scanlines from interference/drop-outs
 # (pipeline default is false; set here so a SatDump update can't silently reset it).
+# --agc 0: hard-disable the RTL2832U digital AGC (a fixed rule, not a tunable).
+# GOES HRIT is a steady CW-like carrier -- AGC would pump the front-end gain and
+# smear SNR. The tuner's own R820T2 AGC is already off because --gain sets a
+# manual tuner-gain value; --agc 0 covers the second, independent RTL2832 AGC.
 ExecStart=/usr/bin/satdump live ${PIPELINE} ${OUTPUT_DIR} \
   --source rtlsdr --frequency ${FREQUENCY} --samplerate ${SAMPLERATE} \
-  --gain ${GAIN} ${BIAS_FLAG} --fill_missing true --http_server ${HTTP_SERVER}
+  --gain ${GAIN} --agc 0 ${BIAS_FLAG} --fill_missing true --http_server ${HTTP_SERVER}
 Restart=on-failure
 RestartSec=10
 # Live DSP is CPU-heavy; give it a small scheduling edge but don't starve the box.

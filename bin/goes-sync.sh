@@ -46,10 +46,22 @@ echo "Syncing $OUTPUT_DIR/ -> ${ARCHIVE_USER}@${ARCHIVE_HOST}:${ARCHIVE_DEST}/ (
 # never read a product the decoder is still writing. Null-delimited to survive
 # any spaces in product dir names (e.g. "Full Disk"). Paths are relative to
 # OUTPUT_DIR so rsync recreates the tree under ARCHIVE_DEST.
+#
+# SESSION-FOLDER GUARD: the live service writes products flat (EMWIN/, IMAGES/,
+# L2/, "Admin Messages"/...), but a manual/offline SatDump run (e.g. decoding a
+# recording during dish realignment) left pointing at OUTPUT_DIR auto-creates a
+# top-level session folder named "<date>_<time>_<pipeline>_<freq>" with its own
+# nested product tree. Since we transfer with --remove-source-files, such a
+# folder would be MOVED to the archive (polluting it a level too deep) and
+# deleted from the Pi. Prune any top-level date-named session dir so those
+# scratch runs stay put. The pattern's trailing "_??-??_" (minutes, no seconds,
+# then more text) matches session roots but never product timestamp folders,
+# which are "<date>_<HH-MM-SS>" and live several levels down, not at depth 1.
 cd "$OUTPUT_DIR"
 LIST="$(mktemp)"
 trap 'rm -f "$LIST"' EXIT
-find . -type f -mmin +"$SETTLE_MIN" -print0 > "$LIST"
+find . -type d -path './????-??-??_??-??_*' -prune -o \
+  -type f -mmin +"$SETTLE_MIN" -print0 > "$LIST"
 
 if [[ ! -s "$LIST" ]]; then
   echo "Nothing settled to sync (all files newer than ${SETTLE_MIN}m); done."
