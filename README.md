@@ -109,6 +109,32 @@ sudo systemctl enable --now goes-sync.timer
 - **Disk** → validated on a 20 MB tmpfs: warning @80%, critical @95% + decode
   stopped, recovery when freed.
 
+## Manual tools (run from the source tree, not installed)
+
+These are interactive, run-on-demand helpers — **not** systemd units and **not**
+copied to `/opt` by `install.sh`. Run them from `~/goes-automation/bin/` while a
+decode is up (they read the same `127.0.0.1:8080/api` endpoint). Stdlib only.
+
+- **`goes-aim.sh`** — live one-line SNR bar meter for **aiming the dish**. Push
+  `snr` as high as it goes; under real lock `ber → ~0` and `lock=1`. Ctrl-C to
+  stop. (Uses helper `goes-aim-read.py`, which one-shots `/api` → `snr peak lock
+  ber`.)
+  ```bash
+  ~/goes-automation/bin/goes-aim.sh
+  ```
+- **`goes-stats.py`** — fuller interactive dashboard: SNR / peak / BER / RS
+  errors / lock with running min·avg·max and lock-%, plus **Pi host health**
+  (CPU temp, SD-card usage, load, memory) so one glance covers link *and* box.
+  Can also log CSV in the background for later review.
+  ```bash
+  goes-stats.py               # live dashboard, refresh every 2 s
+  goes-stats.py -i 5          # every 5 s
+  goes-stats.py --once        # single snapshot, then exit
+  # background CSV log (survives your terminal):
+  nohup goes-stats.py -q -l ~/goes-stats.csv -i 10 >/dev/null 2>&1 &
+  ```
+  `DISK_PATH` overrides which filesystem's usage is shown (default `/`).
+
 ## Handy commands
 
 ```bash
