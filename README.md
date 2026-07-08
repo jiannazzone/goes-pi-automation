@@ -135,6 +135,66 @@ decode is up (they read the same `127.0.0.1:8080/api` endpoint). Stdlib only.
   ```
   `DISK_PATH` overrides which filesystem's usage is shown (default `/`).
 
+## Optional: read-only Samba share (manual host setup)
+
+A read-only SMB share over `~/SatDump` lets you reach in from a desktop and grab a
+pending product by hand, as a redundant path alongside the daily archive sync. It
+is **manual host config** — not installed by `install.sh`, not a systemd unit of
+this repo.
+
+**Why read-only, and why it's safe next to the sync.** `~/SatDump` is a *live
+spool*, not storage: `goes-sync.service` moves settled products to media-center and
+deletes them from the Pi (`--remove-source-files`). So the share is for *reading a
+copy off*, never for parking files on the Pi (anything dropped in gets swept to the
+archive and removed). Read-only also means an SMB client's stray `.DS_Store` /
+`Thumbs.db` writes just fail on the client — no junk enters the spool or the archive.
+
+It does **not** fight the sync:
+- rsync only touches files untouched >`SETTLE_MIN` (5 min); reading over Samba does
+  not change mtime, so browsing never perturbs the settle timer either way.
+- If rsync deletes a file mid-copy, POSIX `unlink()` only drops the directory entry
+  — Samba's open handle keeps the inode alive, so your copy finishes reading clean
+  data and the file simply vanishes from the folder afterward. No corruption.
+- Samba's SMB locks are advisory *between SMB clients only*; they never block
+  rsync's local unlink, so the sync can't stall on a handle you're holding.
+
+```bash
+# 1. Install Samba
+sudo apt update && sudo apt install -y samba
+
+# 2. Append the share block below to /etc/samba/smb.conf
+
+# 3. Set a Samba password for your account (separate from the Unix password;
+#    interactive — run it yourself). smbpasswd -a also enables the user.
+sudo smbpasswd -a aiannazzone
+
+# 4. Sanity-check and (re)start
+testparm                              # validate smb.conf; Ctrl-D to dismiss
+sudo systemctl enable --now smbd
+```
+
+Share block for `/etc/samba/smb.conf`:
+
+```ini
+[goes]
+   comment = GOES-19 products (live spool, read-only)
+   path = /home/aiannazzone/SatDump
+   browseable = yes
+   read only = yes
+   guest ok = no
+   valid users = aiannazzone
+```
+
+Reach it from a client (auth as `aiannazzone` with the Samba password):
+`smb://sat-pi/goes` (macOS Finder ⌘K / Linux), `\\sat-pi\goes` (Windows) — or use
+the Tailscale name/IP if off-LAN.
+
+Optional hardening — restrict the share to your tailnet by adding to the block:
+```ini
+   hosts allow = 100.64.0.0/10 127.0.0.1
+   hosts deny = 0.0.0.0/0
+```
+
 ## Handy commands
 
 ```bash
