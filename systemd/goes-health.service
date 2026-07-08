@@ -1,0 +1,14 @@
+[Unit]
+Description=GOES-19 decode health monitor (one poll, Pushover on degrade)
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=aiannazzone
+EnvironmentFile=/etc/goes-monitor/pushover.env
+Environment=ENDPOINT=http://127.0.0.1:8080/api
+Environment=SNR_FLOOR=2.5
+Environment=DEBOUNCE=3
+Environment=REALERT_SECONDS=21600
+Environment=STATE_FILE=/var/lib/goes-monitor/health-state.json
+ExecStart=/usr/bin/python3 /opt/goes-monitor/bin/goes-health-monitor.py

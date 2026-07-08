@@ -1,0 +1,8 @@
+# Python bytecode
+__pycache__/
+*.pyc
+
+# Never commit real secrets — only the *.env.example templates belong here.
+# (Live secrets live in /etc/goes-monitor/*.env, outside this tree.)
+*.env
+!*.env.example

@@ -1,0 +1,12 @@
+[Unit]
+Description=GOES output disk guard (protects the SD-card rootfs)
+
+[Service]
+# Runs as root: the hard-threshold action is `systemctl stop goes-decode.service`.
+Type=oneshot
+EnvironmentFile=/etc/goes-monitor/pushover.env
+Environment=OUTPUT_DIR=/home/aiannazzone/SatDump
+Environment=DECODE_SERVICE=goes-decode.service
+Environment=REALERT_SECONDS=21600
+Environment=STATE_FILE=/var/lib/goes-monitor/diskguard-state.json
+ExecStart=/usr/bin/python3 /opt/goes-monitor/bin/goes-disk-guard.py

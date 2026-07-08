@@ -1,0 +1,10 @@
+[Unit]
+Description=Daily GOES product sync to archive (this sync IS the backup)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=aiannazzone
+EnvironmentFile=/etc/goes-monitor/sync.env
+ExecStart=/opt/goes-monitor/bin/goes-sync.sh

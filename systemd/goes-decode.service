@@ -1,0 +1,30 @@
+[Unit]
+Description=SatDump GOES-19 HRIT live decode (products only)
+Documentation=file:/home/aiannazzone/goes-automation/README.md
+After=network-online.target
+Wants=network-online.target
+# Restart on crash, but if it fails 5x in 5 min (bad gain, dongle unplugged,
+# dead LNA) give up into a visible `failed` state instead of looping forever.
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=aiannazzone
+EnvironmentFile=/etc/goes-monitor/decode.env
+# Refuse to start until a real tuner gain is set (template ships a placeholder).
+ExecStartPre=/bin/sh -c 'case "$GAIN" in *SET_WORKING_GAIN*|"") echo "GAIN not set in /etc/goes-monitor/decode.env"; exit 1;; esac'
+# Products only: no baseband recording, no --write_lrit / CADU dump flags.
+# ${BIAS_FLAG} expands to --bias (LNA powered from the dongle) or nothing.
+# --fill_missing true: repair black scanlines from interference/drop-outs
+# (pipeline default is false; set here so a SatDump update can't silently reset it).
+ExecStart=/usr/bin/satdump live ${PIPELINE} ${OUTPUT_DIR} \
+  --source rtlsdr --frequency ${FREQUENCY} --samplerate ${SAMPLERATE} \
+  --gain ${GAIN} ${BIAS_FLAG} --fill_missing true --http_server ${HTTP_SERVER}
+Restart=on-failure
+RestartSec=10
+# Live DSP is CPU-heavy; give it a small scheduling edge but don't starve the box.
+Nice=-5
+
+[Install]
+WantedBy=multi-user.target
