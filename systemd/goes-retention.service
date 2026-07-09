@@ -1,0 +1,16 @@
+[Unit]
+Description=Prune archived GOES products past the retention window (archive host)
+# Don't run until the archive drive is mounted; edit both paths if the archive
+# ever moves off /NAS/goes19 (and update PIN in goes-retention.sh + retention.env).
+RequiresMountsFor=/NAS/goes19
+ConditionPathIsDirectory=/NAS/goes19
+
+[Service]
+Type=oneshot
+# Runs as root so it can delete regardless of the archive's file ownership. To
+# run least-privilege instead, add `User=<owner of /NAS/goes19>`.
+EnvironmentFile=/etc/goes-monitor/retention.env
+ExecStart=/opt/goes-monitor/bin/goes-retention.sh
+# Stay out of the way of playback / the incoming sync.
+Nice=15
+IOSchedulingClass=idle

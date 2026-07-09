@@ -1,0 +1,13 @@
+[Unit]
+Description=Daily prune of archived GOES products
+
+[Timer]
+# 05:00 -- an hour after the Pi's 04:00 goes-sync, so pruning follows the day's
+# arrivals (and it only touches files >RETENTION_DAYS old regardless).
+OnCalendar=*-*-* 05:00:00
+# Run on next boot if the archive host was off at 05:00.
+Persistent=true
+RandomizedDelaySec=15min
+
+[Install]
+WantedBy=timers.target

@@ -19,6 +19,37 @@ Source tree lives in `~/goes-automation`. Re-run `sudo ./install.sh` after any e
 Config: `/etc/goes-monitor/{decode,pushover,sync}.env` (root:root 0600).
 State:  `/var/lib/goes-monitor/*.json`. Scripts: `/opt/goes-monitor/bin/`.
 
+## Archive-host retention (media-center)
+
+`goes-sync` only ever *adds* to the archive (`ARCHIVE_DEST`, e.g. `/NAS/goes19`)
+and never deletes there, so without a counterweight the archive drive fills. The
+retention job is that counterweight — a **hard age cap** that runs on
+media-center, not the Pi.
+
+| Unit | Role | Host | Schedule |
+|---|---|---|---|
+| `goes-retention.timer` → `goes-retention.service` | Delete archived products older than `RETENTION_DAYS`, then sweep the emptied dirs | **media-center** | daily 05:00 |
+
+All products age out equally — ABI `IMAGES`, `L2`, and the flat `EMWIN/` files —
+by file mtime, which `rsync -a` preserves from the Pi, so age tracks capture time
+rather than arrival time. Safety: hard-**pinned to `/NAS/goes19`** (`PIN` in the
+script — refuses any other root, even a hand-run), `-xdev`-fenced to the archive
+filesystem, no-ops if the drive is unmounted, and `DRY_RUN=1` reports without
+deleting. Config in `/etc/goes-monitor/retention.env` (`RETENTION_ROOT` /
+`RETENTION_DAYS`); it must point at the same dir as the Pi's `sync.env`
+`ARCHIVE_DEST`.
+
+Deploy on media-center (it needs this source tree there — clone or pull it):
+
+```bash
+git -C ~/goes-automation pull   # or clone it there the first time
+cd ~/goes-automation
+sudo ./install-archive.sh                                 # script + units + retention.env
+sudo DRY_RUN=1 /opt/goes-monitor/bin/goes-retention.sh    # preview — deletes nothing
+sudo systemctl enable --now goes-retention.timer          # then arm the daily prune
+```
+
+
 ## Confirmed on device (2026-07-06)
 
 - SatDump **v1.2.2**; no `ingestor` subcommand → uses `satdump live`.
